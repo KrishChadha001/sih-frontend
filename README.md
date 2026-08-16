@@ -6,11 +6,13 @@
 > Lovable editor. See `AGENTS.md` before rewriting published history
 > (force-push, rebase, amend of pushed commits).
 
-The staff-facing dashboard for the Smart IV Drip System monorepo: sign in,
+The staff-facing dashboard for the Smart IV Drip System project: sign in,
 see every bed's live fluid level/flow rate, get alerted when one goes
-critical. It's the `frontend/` piece of three (`firmware/` = ESP32-S3
-firmware, `server/` = FastAPI backend) - see the [root README](../README.md)
-for how they fit together.
+critical. This repo root is the dashboard itself; `server/` (FastAPI
+backend) lives alongside it as a subfolder so both deploy from one repo
+(dashboard → Vercel, backend → Render). `firmware/` (ESP32-S3) is a
+separate, not-yet-git-tracked piece one level up - see the
+[root README](../README.md) for how everything fits together.
 
 ## Built with
 
