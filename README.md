@@ -64,11 +64,20 @@ set (never expose that key to the browser bundle).
 
 ## Configuring Supabase
 
-### Option A - use the existing project (default)
+### Option A - use the existing project (default, recommended)
 
 `.env` already points at a pre-existing Supabase project
 (`nkcweoiecmfxpkegytww`) with the schema below applied. If you're working
-against that project, there's nothing to configure - just `npm run dev`.
+against that project, there's nothing to set up locally - just `npm run dev`.
+Two things worth doing once you're deploying it for real, though:
+
+- **Rename it** - `nkcweoiecmfxpkegytww` is just an auto-generated project
+  ref and can't be changed, but the human-readable label shown in the
+  dashboard can: **Project Settings → General → Project Name** → e.g.
+  "FluidWatch" or "Smart IV Drip System DB". This is cosmetic only - it
+  doesn't touch the URL, keys, or anything in `.env`.
+- **Add your production URL** once you have a Vercel deployment - see
+  "URL Configuration" under Option B below (same steps, same project).
 
 ### Option B - stand up your own project
 
@@ -87,18 +96,34 @@ with the original project.
      the dashboard on load.
    - `handle_new_user` trigger - auto-creates a `profiles` row and makes the
      *first* signup an admin, everyone after a nurse.
-3. **Auth → URL Configuration**: set Site URL and add a Redirect URL for
-   wherever this will be hosted (`http://localhost:8080` for local dev,
-   plus your production URL once you have one - see Deployment). Email
-   confirmation is on by default; turn it off under **Auth → Providers →
-   Email** if you want signups to be usable immediately during testing.
-4. **Google sign-in** ("Continue with Google" on `/auth`) goes through
-   Lovable Cloud's auth proxy (`src/integrations/lovable/index.ts`), not a
-   plain Supabase OAuth provider - it won't work against a project outside
-   Lovable without replacing that call with a native
-   `supabase.auth.signInWithOAuth({ provider: "google" })` and configuring
-   your own Google OAuth client under **Auth → Providers → Google**. Skip
-   this if email/password sign-in is enough.
+3. **URL Configuration** (Supabase Dashboard → **Authentication → URL
+   Configuration**):
+   - **Site URL**: your production URL (e.g. `https://your-app.vercel.app`).
+   - **Redirect URLs**: add `http://localhost:8080/**` (local dev),
+     `https://your-app.vercel.app/**` (production), and
+     `https://*.vercel.app/**` if you want Vercel's per-branch preview
+     deployments to be able to sign in too.
+   Email confirmation is on by default; turn it off under **Auth →
+   Providers → Email** if you want signups usable immediately during
+   testing.
+4. **Google sign-in** ("Continue with Google" on `/auth`) calls
+   `supabase.auth.signInWithOAuth({ provider: "google" })` directly (no
+   Lovable dependency). It won't work until you configure a Google OAuth
+   client and enable the provider in Supabase:
+   1. Supabase Dashboard → **Authentication → Providers → Google** →
+      enable it. Copy the **Callback URL (for OAuth)** shown there -
+      it looks like `https://<project-ref>.supabase.co/auth/v1/callback`.
+   2. [Google Cloud Console](https://console.cloud.google.com/) → create/
+      select a project → **APIs & Services → OAuth consent screen** →
+      configure it (External, app name, support email - defaults are fine
+      for testing).
+   3. **APIs & Services → Credentials → Create Credentials → OAuth client
+      ID** → Application type **Web application** → under **Authorized
+      redirect URIs**, paste the callback URL from step 1.
+   4. Copy the generated **Client ID** and **Client Secret** back into
+      Supabase's Google provider config from step 1 → **Save**.
+   Until this is done, the button will show a "Google sign-in failed"
+   toast - email/password sign-in is unaffected either way.
 5. `cp .env.example .env` and fill in the new project's URL and publishable
    (`anon`) key from **Settings → API** (both the `VITE_` and non-`VITE_`
    variants - see the table above).
@@ -108,52 +133,48 @@ with the original project.
 
 ## Deployment
 
-Deploying this dashboard makes it reachable, but it's only useful once
-`server/` (the WebSocket source) is *also* running somewhere public over
-HTTPS - see `server/README.md`'s Deploying section. Without that, a deployed
+Deployed on **Vercel**, not Lovable/Cloudflare. Deploying this dashboard
+makes it reachable, but it's only useful once `server/` (the WebSocket
+source) is *also* running somewhere public over HTTPS - see
+`server/README.md`'s Deploying section (Render). Without that, a deployed
 dashboard just runs the built-in demo simulator.
 
-### Option A - Lovable Publish (fastest)
+`vite.config.ts` hard-pins the build target: `nitro: { preset: "vercel" }`.
+`npm run build` produces `.vercel/output/` in Vercel's Build Output API v3
+shape directly - Vercel's platform deploys that as-is once it sees it,
+skipping its own framework auto-build.
 
-Since this project stays connected to Lovable, the simplest path is the
-**Publish** button in the [Lovable editor](https://lovable.dev) - it builds
-and hosts the app with no local tooling needed. Environment variables
-(Supabase URL/key) are managed there too if you're on a project connected to
-Lovable Cloud.
+### Deploy via the Vercel dashboard (recommended)
 
-### Option B - manual deploy to Cloudflare
+1. [vercel.com](https://vercel.com) → **Add New → Project** → import this
+   repo (`PragnyaKhandelwal/SIH26`).
+2. **Root Directory**: leave as the repo root (this git repo's root *is*
+   `frontend/` - there's no nested folder to point at).
+3. **Build Command**: `npm run build` (auto-detected from `package.json`).
+   **Install Command**: `npm install`. Output Directory doesn't matter -
+   the Build Output API takes over.
+4. **Environment Variables** - add all six from `.env`, for Production *and*
+   Preview: `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`,
+   `VITE_SUPABASE_PROJECT_ID`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`,
+   `SUPABASE_PROJECT_ID`. Unlike Cloudflare, Vercel uses the same
+   dashboard env vars for both build time (`VITE_*`, baked into the
+   client bundle) and runtime (the rest, read by the SSR function) - no
+   separate secrets step.
+5. Deploy. Vercel assigns a `*.vercel.app` domain immediately.
+6. Add that domain to Supabase's **Auth → URL Configuration** (see
+   Configuring Supabase below) - sign-in will fail until you do.
+7. Point `ward_settings.ws_url` (via `/admin`) at the deployed backend's
+   `wss://` URL once it's up - `ws://localhost:...` only works locally.
 
-The build target is Cloudflare Workers (via TanStack Start's Nitro/Cloudflare
-preset, configured in `vite.config.ts`).
+### Deploy via CLI
 
 ```sh
-npm run build              # outputs to .output/, generates .output/server/wrangler.json
-npx wrangler login          # one-time, opens a browser to authorize your Cloudflare account
-npx nitro deploy --prebuilt
+npx vercel login    # one-time, opens a browser to authorize your account
+npx vercel --prod
 ```
 
-Notes:
-
-- The worker name is auto-derived (currently `krishchadha001-sih-frontend`,
-  from the git remote this was forked from) - edit `name` in
-  `.output/server/wrangler.json` before deploying if you want a different
-  one, or add a `name` override under `tanstackStart`/Nitro config in
-  `vite.config.ts` so it's consistent across rebuilds.
-- `VITE_*` env vars are baked into the client bundle **at build time** - set
-  them in your shell (or a `.env` present during `npm run build`) before
-  building.
-- The non-`VITE_` server-side vars (`SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`)
-  are read at **runtime** by the Worker for SSR, and `.env` isn't shipped to
-  Cloudflare - set them as real Worker vars/secrets instead:
-  ```sh
-  npx wrangler secret put SUPABASE_URL
-  npx wrangler secret put SUPABASE_PUBLISHABLE_KEY
-  ```
-- After deploying, add the Worker's `*.workers.dev` URL (or custom domain)
-  to Supabase's **Auth → URL Configuration** redirect list, or sign-in will
-  fail.
-- Point `ward_settings.ws_url` at the deployed backend's `wss://` URL
-  (see `server/README.md`) - `ws://localhost:...` only works for local dev.
+The Vercel CLI runs its own build (respecting `vite.config.ts`'s `vercel`
+preset) and links/creates the project interactively on first run.
 
 ## Integration with the Smart IV Drip System
 
