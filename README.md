@@ -27,3 +27,29 @@ npm run dev
 - TypeScript
 - React
 - Tailwind CSS
+
+## Integration with the Smart IV Drip System
+
+This is the `frontend/` piece of a larger monorepo (`firmware/` = ESP32-S3
+firmware, `server/` = FastAPI backend). Two separate data sources feed it:
+
+- **Staff auth, roles, and ward settings** - a pre-existing Supabase project
+  (`.env` here already points at it: `profiles`, `user_roles`,
+  `ward_settings` tables). Unchanged, not part of this integration.
+- **Live device telemetry** - `src/routes/_authenticated/dashboard.tsx`
+  opens a raw WebSocket to `ward_settings.ws_url` (admin-editable from
+  `/admin`, defaults to `DEFAULT_WS_URL` in `src/lib/fluidwatch.ts`) and
+  expects messages shaped `{id, bed, patient, fluid, flow, level, status}`
+  (single object or array). `server/app/routers/ws.py`'s `/ws/bedfeed`
+  produces exactly this, translating each ESP32 reading via
+  `server/app/bedfeed.py`.
+
+`src/lib/fluidwatch.ts`'s `applyLiveUpdate()` merges incoming messages into
+the bed list by `id`: an id that matches an existing card (including the 6
+demo beds seeded in `INITIAL_BEDS`) updates it in place, and an unrecognized
+id (a real device's `DEVICE_ID`) is added as a new card - no manual
+provisioning needed on the frontend side when a new IV stand comes online.
+
+To see it live: run `server/` (`uvicorn app.main:app --port 8000`), flash
+`firmware/`, run this dashboard, sign in, and hit "Connect ward server" on
+`/dashboard`. See `server/README.md` for the full walkthrough.

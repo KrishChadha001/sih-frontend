@@ -30,7 +30,7 @@ import {
   DEFAULT_WS_URL,
   INITIAL_BEDS,
   UNITS,
-  deriveStatus,
+  applyLiveUpdate,
   tick,
   type Bed,
   type UnitKey,
@@ -136,24 +136,7 @@ function DashboardPage() {
   }, []);
 
   const applyPayload = useCallback((payload: unknown) => {
-    const rows = Array.isArray(payload) ? payload : [payload];
-    setBeds((current) =>
-      current.map((b) => {
-        const match = rows.find(
-          (r) => r && typeof r === "object" && String((r as Bed).id ?? "") === b.id,
-        ) as Partial<Bed> | undefined;
-        if (!match) return b;
-        const flow = typeof match.flow === "number" ? match.flow : b.flow;
-        const level = typeof match.level === "number" ? match.level : b.level;
-        return {
-          ...b,
-          flow,
-          level,
-          status: match.status ?? deriveStatus(level, flow),
-          updatedAt: Date.now(),
-        };
-      }),
-    );
+    setBeds((current) => applyLiveUpdate(current, payload));
   }, []);
 
   useEffect(() => {

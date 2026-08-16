@@ -12,7 +12,12 @@ export interface Bed {
   updatedAt: number;
 }
 
-export const DEFAULT_WS_URL = "ws://localhost:8765";
+// Backend's /ws/bedfeed (server/app/routers/ws.py) - bridges the ESP32
+// firmware's readings into this exact shape. For a demo where the
+// dashboard runs on a different machine than the backend, swap
+// "localhost" for the backend host's LAN IP (or change it live from the
+// Admin panel, which persists to ward_settings.ws_url).
+export const DEFAULT_WS_URL = "ws://localhost:8000/ws/bedfeed";
 
 export const INITIAL_BEDS: Bed[] = [
   { id: "01", bed: "Bed 01", patient: "J. Marsh", fluid: "Saline 0.9%", flow: 124, level: 78, status: "STABLE", muted: false, updatedAt: Date.now() },
@@ -38,6 +43,43 @@ export function tick(beds: Bed[]): Bed[] {
     const flow = level <= 0 ? 0 : Math.max(0, b.flow + jitter);
     return { ...b, level, flow, status: deriveStatus(level, flow), updatedAt: Date.now() };
   });
+}
+
+/**
+ * Merges a live payload from the ward WebSocket into the current bed
+ * list. Existing beds (by id) are updated in place; an id not already
+ * present becomes a new card - this is how a real device (id = its
+ * DEVICE_ID, e.g. "IV-STAND-01") shows up alongside the demo beds the
+ * first time it reports in, no manual provisioning needed on this side.
+ */
+export function applyLiveUpdate(beds: Bed[], payload: unknown): Bed[] {
+  const rows = Array.isArray(payload) ? payload : [payload];
+  const byId = new Map(beds.map((b) => [b.id, b]));
+
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const incoming = row as Partial<Bed>;
+    const id = String(incoming.id ?? "").trim();
+    if (!id) continue;
+
+    const existing = byId.get(id);
+    const flow = typeof incoming.flow === "number" ? incoming.flow : (existing?.flow ?? 0);
+    const level = typeof incoming.level === "number" ? incoming.level : (existing?.level ?? 0);
+
+    byId.set(id, {
+      id,
+      bed: incoming.bed ?? existing?.bed ?? `Device ${id}`,
+      patient: incoming.patient ?? existing?.patient ?? "Unassigned",
+      fluid: incoming.fluid ?? existing?.fluid ?? "Unknown",
+      flow,
+      level,
+      status: incoming.status ?? deriveStatus(level, flow),
+      muted: existing?.muted ?? false,
+      updatedAt: Date.now(),
+    });
+  }
+
+  return Array.from(byId.values());
 }
 
 export const UNITS = {
