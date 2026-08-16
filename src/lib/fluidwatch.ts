@@ -28,20 +28,38 @@ export const INITIAL_BEDS: Bed[] = [
   { id: "06", bed: "Bed 06", patient: "T. Nakamura", fluid: "TPN Nutrition", flow: 0, level: 2, status: "CRITICAL", muted: false, updatedAt: Date.now() },
 ];
 
-export function deriveStatus(level: number, flow: number): BedStatus {
-  if (level <= 10 || flow <= 15) return "CRITICAL";
-  if (level <= 35 || flow <= 50) return "WATCH";
+/** Ward-configurable alert thresholds, set from the Admin panel and
+ * persisted to Supabase's `ward_settings` row. */
+export interface Thresholds {
+  watchLevel: number;
+  criticalLevel: number;
+  minFlow: number;
+}
+
+export const DEFAULT_THRESHOLDS: Thresholds = {
+  watchLevel: 35,
+  criticalLevel: 10,
+  minFlow: 15,
+};
+
+export function deriveStatus(
+  level: number,
+  flow: number,
+  thresholds: Thresholds = DEFAULT_THRESHOLDS,
+): BedStatus {
+  if (level <= thresholds.criticalLevel || flow <= thresholds.minFlow) return "CRITICAL";
+  if (level <= thresholds.watchLevel) return "WATCH";
   return "STABLE";
 }
 
 /** Simulated telemetry tick used when no WebSocket server is reachable. */
-export function tick(beds: Bed[]): Bed[] {
+export function tick(beds: Bed[], thresholds: Thresholds = DEFAULT_THRESHOLDS): Bed[] {
   return beds.map((b) => {
     const drain = b.flow > 0 ? Math.random() * 1.2 : 0;
     const level = Math.max(0, Math.round((b.level - drain) * 10) / 10);
     const jitter = b.flow > 0 ? Math.round((Math.random() - 0.5) * 8) : 0;
     const flow = level <= 0 ? 0 : Math.max(0, b.flow + jitter);
-    return { ...b, level, flow, status: deriveStatus(level, flow), updatedAt: Date.now() };
+    return { ...b, level, flow, status: deriveStatus(level, flow, thresholds), updatedAt: Date.now() };
   });
 }
 
@@ -52,7 +70,11 @@ export function tick(beds: Bed[]): Bed[] {
  * DEVICE_ID, e.g. "IV-STAND-01") shows up alongside the demo beds the
  * first time it reports in, no manual provisioning needed on this side.
  */
-export function applyLiveUpdate(beds: Bed[], payload: unknown): Bed[] {
+export function applyLiveUpdate(
+  beds: Bed[],
+  payload: unknown,
+  thresholds: Thresholds = DEFAULT_THRESHOLDS,
+): Bed[] {
   const rows = Array.isArray(payload) ? payload : [payload];
   const byId = new Map(beds.map((b) => [b.id, b]));
 
@@ -73,7 +95,7 @@ export function applyLiveUpdate(beds: Bed[], payload: unknown): Bed[] {
       fluid: incoming.fluid ?? existing?.fluid ?? "Unknown",
       flow,
       level,
-      status: incoming.status ?? deriveStatus(level, flow),
+      status: incoming.status ?? deriveStatus(level, flow, thresholds),
       muted: existing?.muted ?? false,
       updatedAt: Date.now(),
     });

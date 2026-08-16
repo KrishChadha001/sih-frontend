@@ -27,12 +27,14 @@ import { BedCard } from "@/components/BedCard";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import {
+  DEFAULT_THRESHOLDS,
   DEFAULT_WS_URL,
   INITIAL_BEDS,
   UNITS,
   applyLiveUpdate,
   tick,
   type Bed,
+  type Thresholds,
   type UnitKey,
 } from "@/lib/fluidwatch";
 
@@ -116,6 +118,7 @@ function DashboardPage() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [unit, setUnit] = useState<UnitKey>("ml");
   const [wsUrl, setWsUrl] = useState(DEFAULT_WS_URL);
+  const [thresholds, setThresholds] = useState<Thresholds>(DEFAULT_THRESHOLDS);
   const [connected, setConnected] = useState(false);
   const [wantLive, setWantLive] = useState(false);
   const [log, setLog] = useState<{ id: string; text: string; at: number }[]>([]);
@@ -126,18 +129,26 @@ function DashboardPage() {
   useEffect(() => {
     void supabase
       .from("ward_settings")
-      .select("ws_url, sound_alerts")
+      .select("ws_url, sound_alerts, watch_level, critical_level, min_flow")
       .maybeSingle()
       .then(({ data }) => {
         if (!data) return;
         setWsUrl(data.ws_url ?? DEFAULT_WS_URL);
         setSound(Boolean(data.sound_alerts));
+        setThresholds({
+          watchLevel: data.watch_level ?? DEFAULT_THRESHOLDS.watchLevel,
+          criticalLevel: data.critical_level ?? DEFAULT_THRESHOLDS.criticalLevel,
+          minFlow: data.min_flow ?? DEFAULT_THRESHOLDS.minFlow,
+        });
       });
   }, []);
 
-  const applyPayload = useCallback((payload: unknown) => {
-    setBeds((current) => applyLiveUpdate(current, payload));
-  }, []);
+  const applyPayload = useCallback(
+    (payload: unknown) => {
+      setBeds((current) => applyLiveUpdate(current, payload, thresholds));
+    },
+    [thresholds],
+  );
 
   useEffect(() => {
     if (!wantLive) {
@@ -173,9 +184,9 @@ function DashboardPage() {
 
   useEffect(() => {
     if (!autoRefresh || connected) return;
-    const t = setInterval(() => setBeds((b) => tick(b)), 2000);
+    const t = setInterval(() => setBeds((b) => tick(b, thresholds)), 2000);
     return () => clearInterval(t);
-  }, [autoRefresh, connected]);
+  }, [autoRefresh, connected, thresholds]);
 
   useEffect(() => {
     beds.forEach((b) => {
