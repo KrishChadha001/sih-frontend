@@ -6,3 +6,11 @@ pydantic-settings>=2.3
 python-dotenv>=1.0
 python-multipart>=0.0.9
 openpyxl>=3.1
+
+# Fill-level model (app/cv/real_frame_processor.py). CPU-only wheels -
+# the default PyPI torch build bundles CUDA and is enormous for no
+# benefit on a CPU-only host like Render's free tier.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.2
+torchvision>=0.17
+pillow>=10.0
