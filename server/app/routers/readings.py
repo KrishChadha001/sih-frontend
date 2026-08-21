@@ -1,8 +1,9 @@
 import csv
 import io
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from openpyxl import Workbook
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,12 +17,17 @@ from ..ws_manager import bed_manager, reading_manager
 
 router = APIRouter(prefix="/api/v1/readings", tags=["readings"])
 
+# A proper Security scheme (not a bare Header dependency) so /docs renders
+# a real "Authorize" button - paste the token once, it's sent on every
+# request after that. The wire format is unchanged: clients (firmware,
+# curl) still send "Authorization: Bearer <token>" exactly as before.
+_bearer_scheme = HTTPBearer(auto_error=False)
 
-def require_auth(authorization: str | None = Header(default=None)) -> None:
+
+def require_auth(credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme)) -> None:
     if not settings.api_auth_token:
         return  # auth disabled while prototyping
-    expected = f"Bearer {settings.api_auth_token}"
-    if authorization != expected:
+    if credentials is None or credentials.credentials != settings.api_auth_token:
         raise HTTPException(status_code=401, detail="invalid or missing bearer token")
 
 
