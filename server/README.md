@@ -7,8 +7,10 @@ EMR/records purposes. Replaces the earlier `mock_server.py` stand-in.
 ## Layout
 
 - `app/models.py` / `app/schemas.py` - the `Reading` shape. Field names
-  mirror `IVDripReading` in `firmware/esp32-iv-monitor/include/data_provider.h`
-  and the JSON `CloudClient::sendReading()` POSTs - keep both in sync.
+  originally mirrored the ESP32-S3 firmware's `IVDripReading` struct
+  (now `firmware/archived-esp32-s3-ov3660/` - superseded by an
+  ESP32-CAM/OV5640 board, new firmware not written yet); keep the new
+  firmware's JSON payload in sync with this shape once it exists.
 - `app/routers/readings.py` - ingest (`POST /api/v1/readings`), list, latest,
   and CSV/Excel export.
 - `app/routers/ws.py` - two WebSocket feeds, both broadcast the instant a
@@ -21,12 +23,11 @@ EMR/records purposes. Replaces the earlier `mock_server.py` stand-in.
   takes an uploaded image, runs it through `active_processor`
   (`app/cv/pipeline.py`) to get a fill %, then `build_reading()`
   (`app/cv/reading_builder.py`) turns that into a full reading - same DB
-  row and WebSocket broadcast as the ESP32 JSON path. Runs on
-  `MockFrameProcessor` (random plausible numbers) until real CV/ML is
-  wired in - see **`CV_INTEGRATION.md`** for the exact handoff spec (the
-  real implementation only needs to return one number: fill percentage).
-  Test it with any image, no camera/device needed, via the file-upload
-  widget at `/docs`.
+  row and WebSocket broadcast as the ESP32 JSON path. Runs a real trained
+  model (`app/cv/real_frame_processor.py`, MobileNetV3-Small) as of
+  2026-08-21 - see **`CV_INTEGRATION.md`** for what it is and how to
+  update it. Test it with any image, no camera/device needed, via the
+  file-upload widget at `/docs`.
 - `app/db.py` - SQLAlchemy engine/session. SQLite by default; swap
   `DATABASE_URL` to Postgres later without touching app code.
 

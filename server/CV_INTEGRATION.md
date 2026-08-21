@@ -1,106 +1,77 @@
-# Wiring in the real fluid-level model
+# The fluid-level model - how it's wired in
 
-This is the one file you need to change to plug your trained model into
-the running system. Everything else - the upload endpoint, the database,
-the WebSocket push to the dashboard - is already built and already
-working with a mock. You're filling in one function.
+**Status: done.** `active_processor` in `app/cv/pipeline.py` runs the real
+trained model (`app/cv/real_frame_processor.py`), not the mock, as of
+2026-08-21. This doc now describes what's actually running and how to
+update it later, rather than a handoff spec (it originally was one - see
+git history if you want the "if you're integrating a model from scratch"
+version).
 
-## The interface
+## What's running
 
-`app/cv/pipeline.py`:
+- **Model**: `app/cv/models/fill_regression_v2_mobilenet.pth` -
+  MobileNetV3-Small, multitask (continuous 0-100% regression + auxiliary
+  4-class head). Test MAE ~3.8%, RMSE ~8.9% on the training team's
+  held-out set. Full training provenance, the training scripts, and the
+  earlier classifier/classical-CV attempts it superseded live in
+  `ml-model-training/` at the repo root (not itself in git - see that
+  folder's own README).
+- **Integration**: `app/cv/real_frame_processor.py`'s `RealFrameProcessor`
+  loads the model once at import time (not per-request), decodes the
+  uploaded image, replicates the exact preprocessing the model was
+  trained with (224×224, aspect-preserving thumbnail, black-padded to
+  square, ImageNet-normalized - see `_prepare_image()`), runs inference,
+  and returns the regression head's fill % (clamped 0-100). The auxiliary
+  classification head's prediction (empty/50%/80%/full) is logged
+  alongside it as a sanity check but isn't otherwise used.
+- **The interface** (`app/cv/base.py`) is unchanged from before -
+  `FrameProcessor.process(device_id, frame_bytes) -> float`. Everything
+  downstream (volume, flow-rate-from-history, status/alerts, defaults) is
+  still derived centrally in `app/cv/reading_builder.py`; the model itself
+  only ever answers one question, same as originally designed.
 
-```python
-class FrameProcessor(ABC):
-    @abstractmethod
-    def process(self, device_id: str, frame_bytes: bytes) -> float: ...
-```
+## Dependencies
 
-That's the whole contract. Implement a class with this one method:
+`torch`, `torchvision`, `pillow` - added to `requirements.txt`, pinned to
+CPU-only wheels via `--extra-index-url https://download.pytorch.org/whl/cpu`
+(the default PyPI `torch` bundles CUDA and is enormous for no benefit on
+a CPU-only host). Confirmed working: `torch 2.13.0+cpu`,
+`torchvision 0.28.0+cpu`.
 
-```python
-class RealFrameProcessor(FrameProcessor):
-    def process(self, device_id: str, frame_bytes: bytes) -> float:
-        # frame_bytes is the raw uploaded image file (JPEG/PNG/whatever
-        # your camera sends), exactly as bytes - decode it however your
-        # script already does (cv2.imdecode, PIL.Image.open(BytesIO(...)), etc).
-        #
-        # Run your model, return the fill percentage as a plain float,
-        # 0-100. That's it - nothing else to return.
-        ...
-        return level_pct
-```
-
-Then in the same file, change the last line from:
-
-```python
-active_processor: FrameProcessor = MockFrameProcessor()
-```
-
-to:
-
-```python
-active_processor: FrameProcessor = RealFrameProcessor()
-```
-
-Load your model weights once, outside `process()` (e.g. in `__init__` or
-as a module-level global) - not on every request, or every upload will
-re-load the model from disk.
-
-## What you don't need to worry about
-
-Everything downstream of that float is already handled centrally in
-`app/cv/reading_builder.py`'s `build_reading()`:
-
-- **Volume remaining** - computed from your level % × bag capacity (500mL
-  default; pass a different `bag_capacity_ml` into `build_reading()` if
-  needed).
-- **Flow rate** - a single photo can't show a rate, so it's derived from
-  how much volume drained since this same `device_id`'s last reading in
-  the database (looked up automatically).
-- **Status / alerts** (`NORMAL` / `LOW_LEVEL` / `EMPTY`) - derived from
-  your level % against fixed thresholds.
-- **Bed/patient/fluid labels, battery, wifi signal** - defaults or passed
-  through separately; not something the image analysis produces.
-
-You genuinely only need to return one number.
-
-## Your dependencies and model file
-
-- Add whatever your script needs (`opencv-python`, `torch`, `tensorflow`,
-  `scikit-learn`, ...) to `requirements.txt` in this folder.
-- Put your model weights file somewhere under `app/cv/` (e.g.
-  `app/cv/models/level_model.pt`) and load it by a path relative to that
-  file (`Path(__file__).parent / "models" / "..."`), not an absolute path
-  from your own machine.
-- If the weights file is large (tens of MB+), flag it - we may want it in
-  Git LFS or downloaded at deploy time instead of committed directly.
-- **Heads up on deployment**: the backend's free-tier host (Render) is
-  CPU-only with limited RAM. If your model needs a GPU or a lot of memory
-  to run inference, say so before we deploy - we'd need a different host
-  or a lighter export of the model (e.g. ONNX/quantized) for it to run
-  there at all.
+**Render deployment note**: this is a real dependency install (~1GB+ of
+wheels) and a 4.2MB model file committed to the repo - expect a slower
+first build than before. MobileNetV3-Small is lightweight enough that CPU
+inference should be fine on Render's free tier (no GPU needed), but
+confirm the build itself completes within Render's free-tier build time
+limits once actually deployed there.
 
 ## Testing without any camera or ESP32 hardware
 
-1. `cd frontend/server`, activate the venv, `pip install -r requirements.txt`
-   (after adding your deps), `uvicorn app.main:app --reload --port 8000`.
-2. Open `http://localhost:8000/docs` in a browser.
-3. Find `POST /api/v1/frames`, click "Try it out".
-4. Set `device_id` to anything (e.g. `test-1`), pick any image file from
-   your dataset, hit Execute.
-5. You'll get back a full reading JSON with your computed level % flowed
-   through into `fluid_level_percent`, `volume_remaining_ml`, `status`,
-   etc. - confirms your model ran and the whole pipeline works.
-6. Repeat with a couple of different images (different fill levels) and
-   check the numbers move the way you'd expect.
+Unchanged - still the easiest way to try it:
 
-If you'd rather script it than click through Swagger, `require_auth`
-needs a bearer token unless `API_AUTH_TOKEN` is unset in `.env` (see the
-main `README.md`'s Setup section) - check the startup log for the
-current token.
+1. `cd frontend/server`, activate the venv, `pip install -r requirements.txt`,
+   `uvicorn app.main:app --reload --port 8000`.
+2. Open `http://localhost:8000/docs`, find `POST /api/v1/frames`, "Try it
+   out", set any `device_id`, upload a real photo, Execute.
+3. `fluid_level_percent` in the response is the model's actual prediction
+   on that image (not a mock random number anymore).
 
 ```sh
 curl -X POST "http://localhost:8000/api/v1/frames?device_id=test-1" \
   -H "Authorization: Bearer <token>" \
   -F "file=@/path/to/some_bag_photo.jpg"
 ```
+
+Verified end-to-end (mechanically - real image in, real inference,
+correct reading derived, correct WebSocket broadcast) with a synthetic
+test image. **Not yet validated against real IV bag/container photos or
+intermediate fill levels** - the training data notes flag that
+predictions between the four trained levels (0/50/80/100%) are
+interpolation. Worth running a batch of real photos through `/docs` (or
+`ml-model-training/test_v2.py` directly) before trusting this in a demo.
+
+## If the model needs updating later
+
+Retrain via `ml-model-training/train_continuous_v2.py`, drop the new
+`.pth` file into `app/cv/models/` (same filename, or update the path in
+`real_frame_processor.py`), restart the server. Nothing else changes.
