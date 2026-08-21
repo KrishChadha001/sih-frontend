@@ -17,11 +17,16 @@ EMR/records purposes. Replaces the earlier `mock_server.py` stand-in.
 - `app/bedfeed.py` - translates a `Reading` into the `{id, bed, patient,
   fluid, flow, level, status}` shape `frontend/src/lib/fluidwatch.ts`
   expects, mapping our richer `status` enum down to its `STABLE/WATCH/CRITICAL`.
-- `app/routers/frames.py` + `app/cv/pipeline.py` - **not used yet.** This is
-  the seam for the real camera path: once `CameraDataProvider` on the
-  firmware side uploads raw frames instead of precomputed mock readings,
-  implement `FrameProcessor` here with real OpenCV/CV logic and swap
-  `active_processor` in `app/cv/pipeline.py`. Nothing else changes.
+- `app/routers/frames.py` - the camera-frame path (`POST /api/v1/frames`):
+  takes an uploaded image, runs it through `active_processor`
+  (`app/cv/pipeline.py`) to get a fill %, then `build_reading()`
+  (`app/cv/reading_builder.py`) turns that into a full reading - same DB
+  row and WebSocket broadcast as the ESP32 JSON path. Runs on
+  `MockFrameProcessor` (random plausible numbers) until real CV/ML is
+  wired in - see **`CV_INTEGRATION.md`** for the exact handoff spec (the
+  real implementation only needs to return one number: fill percentage).
+  Test it with any image, no camera/device needed, via the file-upload
+  widget at `/docs`.
 - `app/db.py` - SQLAlchemy engine/session. SQLite by default; swap
   `DATABASE_URL` to Postgres later without touching app code.
 
