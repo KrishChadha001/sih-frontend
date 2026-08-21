@@ -12,7 +12,12 @@ export interface Bed {
   updatedAt: number;
 }
 
-export const DEFAULT_WS_URL = "ws://localhost:8765";
+// Backend's /ws/bedfeed (server/app/routers/ws.py) - bridges the ESP32
+// firmware's readings into this exact shape. For a demo where the
+// dashboard runs on a different machine than the backend, swap
+// "localhost" for the backend host's LAN IP (or change it live from the
+// Admin panel, which persists to ward_settings.ws_url).
+export const DEFAULT_WS_URL = "ws://localhost:8000/ws/bedfeed";
 
 export const INITIAL_BEDS: Bed[] = [
   { id: "01", bed: "Bed 01", patient: "J. Marsh", fluid: "Saline 0.9%", flow: 124, level: 78, status: "STABLE", muted: false, updatedAt: Date.now() },
@@ -23,21 +28,80 @@ export const INITIAL_BEDS: Bed[] = [
   { id: "06", bed: "Bed 06", patient: "T. Nakamura", fluid: "TPN Nutrition", flow: 0, level: 2, status: "CRITICAL", muted: false, updatedAt: Date.now() },
 ];
 
-export function deriveStatus(level: number, flow: number): BedStatus {
-  if (level <= 10 || flow <= 15) return "CRITICAL";
-  if (level <= 35 || flow <= 50) return "WATCH";
+/** Ward-configurable alert thresholds, set from the Admin panel and
+ * persisted to Supabase's `ward_settings` row. */
+export interface Thresholds {
+  watchLevel: number;
+  criticalLevel: number;
+  minFlow: number;
+}
+
+export const DEFAULT_THRESHOLDS: Thresholds = {
+  watchLevel: 35,
+  criticalLevel: 10,
+  minFlow: 15,
+};
+
+export function deriveStatus(
+  level: number,
+  flow: number,
+  thresholds: Thresholds = DEFAULT_THRESHOLDS,
+): BedStatus {
+  if (level <= thresholds.criticalLevel || flow <= thresholds.minFlow) return "CRITICAL";
+  if (level <= thresholds.watchLevel) return "WATCH";
   return "STABLE";
 }
 
 /** Simulated telemetry tick used when no WebSocket server is reachable. */
-export function tick(beds: Bed[]): Bed[] {
+export function tick(beds: Bed[], thresholds: Thresholds = DEFAULT_THRESHOLDS): Bed[] {
   return beds.map((b) => {
     const drain = b.flow > 0 ? Math.random() * 1.2 : 0;
     const level = Math.max(0, Math.round((b.level - drain) * 10) / 10);
     const jitter = b.flow > 0 ? Math.round((Math.random() - 0.5) * 8) : 0;
     const flow = level <= 0 ? 0 : Math.max(0, b.flow + jitter);
-    return { ...b, level, flow, status: deriveStatus(level, flow), updatedAt: Date.now() };
+    return { ...b, level, flow, status: deriveStatus(level, flow, thresholds), updatedAt: Date.now() };
   });
+}
+
+/**
+ * Merges a live payload from the ward WebSocket into the current bed
+ * list. Existing beds (by id) are updated in place; an id not already
+ * present becomes a new card - this is how a real device (id = its
+ * DEVICE_ID, e.g. "IV-STAND-01") shows up alongside the demo beds the
+ * first time it reports in, no manual provisioning needed on this side.
+ */
+export function applyLiveUpdate(
+  beds: Bed[],
+  payload: unknown,
+  thresholds: Thresholds = DEFAULT_THRESHOLDS,
+): Bed[] {
+  const rows = Array.isArray(payload) ? payload : [payload];
+  const byId = new Map(beds.map((b) => [b.id, b]));
+
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const incoming = row as Partial<Bed>;
+    const id = String(incoming.id ?? "").trim();
+    if (!id) continue;
+
+    const existing = byId.get(id);
+    const flow = typeof incoming.flow === "number" ? incoming.flow : (existing?.flow ?? 0);
+    const level = typeof incoming.level === "number" ? incoming.level : (existing?.level ?? 0);
+
+    byId.set(id, {
+      id,
+      bed: incoming.bed ?? existing?.bed ?? `Device ${id}`,
+      patient: incoming.patient ?? existing?.patient ?? "Unassigned",
+      fluid: incoming.fluid ?? existing?.fluid ?? "Unknown",
+      flow,
+      level,
+      status: incoming.status ?? deriveStatus(level, flow, thresholds),
+      muted: existing?.muted ?? false,
+      updatedAt: Date.now(),
+    });
+  }
+
+  return Array.from(byId.values());
 }
 
 export const UNITS = {
