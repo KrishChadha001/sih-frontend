@@ -32,9 +32,12 @@ const StatusIcon = ({ status }: { status: Bed["status"] }) =>
     <AlertTriangle className="size-3.5" />
   );
 
-/** "just now" / "12s ago" / "4m ago" - ticks every second so it's
- * visibly live on screen, not a static string frozen at render time. */
-function useFreshnessLabel(updatedAt: number): string {
+/** "just now" / "12s ago" / "4m ago", ticking every second. Deliberately
+ * its own component, not a hook called inside BedCard - a hook's state
+ * lives in whichever component calls it, so ticking every second would
+ * re-render the *entire* card (image, sparkline chart, everything) once
+ * a second. Isolated here, only this small text node re-renders. */
+function FreshnessLabel({ updatedAt }: { updatedAt: number }) {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -43,10 +46,13 @@ function useFreshnessLabel(updatedAt: number): string {
   }, []);
 
   const seconds = Math.max(0, Math.round((now - updatedAt) / 1000));
-  if (seconds < 3) return "just now";
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.round(seconds / 60);
-  return `${minutes}m ago`;
+  const label = seconds < 3 ? "just now" : seconds < 60 ? `${seconds}s ago` : `${Math.round(seconds / 60)}m ago`;
+
+  return (
+    <span className="mt-0.5 shrink-0 text-xs text-muted-foreground" title={new Date(updatedAt).toLocaleTimeString()}>
+      {label}
+    </span>
+  );
 }
 
 export function BedCard({
@@ -68,7 +74,6 @@ export function BedCard({
   // next reading's URL (a new cache-busted timestamp) comes in.
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const showImage = imageUrl !== null && imageUrl !== failedUrl;
-  const freshness = useFreshnessLabel(bed.updatedAt);
   const sparklineData = bed.history.map((level, i) => ({ i, level }));
 
   return (
@@ -86,12 +91,7 @@ export function BedCard({
           </h3>
           <p className="mt-1 text-sm text-muted-foreground">{bed.fluid}</p>
         </div>
-        <span
-          className="mt-0.5 shrink-0 text-xs text-muted-foreground"
-          title={new Date(bed.updatedAt).toLocaleTimeString()}
-        >
-          {freshness}
-        </span>
+        <FreshnessLabel updatedAt={bed.updatedAt} />
       </div>
 
       {showImage && (
