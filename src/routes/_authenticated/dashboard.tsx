@@ -32,6 +32,7 @@ import {
   INITIAL_BEDS,
   UNITS,
   applyLiveUpdate,
+  deriveHttpOrigin,
   tick,
   type Bed,
   type Thresholds,
@@ -205,6 +206,8 @@ function DashboardPage() {
     });
   }, [beds, sound]);
 
+  const httpOrigin = useMemo(() => deriveHttpOrigin(wsUrl), [wsUrl]);
+
   const stats = useMemo(() => {
     const critical = beds.filter((b) => b.status === "CRITICAL").length;
     const watch = beds.filter((b) => b.status === "WATCH").length;
@@ -273,7 +276,7 @@ function DashboardPage() {
       <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_320px]">
         <div className="grid gap-6 md:grid-cols-2">
           {visible.map((b) => (
-            <BedCard key={b.id} bed={b} unit={unit} onToggleMute={toggleMute} />
+            <BedCard key={b.id} bed={b} unit={unit} httpOrigin={httpOrigin} onToggleMute={toggleMute} />
           ))}
           {visible.length === 0 && <p className="text-muted-foreground">No beds match this filter.</p>}
         </div>

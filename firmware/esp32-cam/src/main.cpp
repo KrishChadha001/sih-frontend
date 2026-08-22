@@ -40,8 +40,8 @@ bool initCamera() {
     config.pin_pclk = PCLK_GPIO_NUM;
     config.pin_vsync = VSYNC_GPIO_NUM;
     config.pin_href = HREF_GPIO_NUM;
-    config.pin_sscb_sda = SIOD_GPIO_NUM;
-    config.pin_sscb_scl = SIOC_GPIO_NUM;
+    config.pin_sccb_sda = SIOD_GPIO_NUM;
+    config.pin_sccb_scl = SIOC_GPIO_NUM;
     config.pin_pwdn = PWDN_GPIO_NUM;
     config.pin_reset = RESET_GPIO_NUM;
     config.xclk_freq_hz = 20000000;
@@ -67,6 +67,13 @@ bool initCamera() {
     if (err != ESP_OK) {
         Serial.printf("[Camera] init failed: 0x%x\n", err);
         return false;
+    }
+
+    sensor_t *sensor = esp_camera_sensor_get();
+    if (sensor != nullptr) {
+        sensor->set_brightness(sensor, CAPTURE_BRIGHTNESS);
+        sensor->set_contrast(sensor, CAPTURE_CONTRAST);
+        sensor->set_saturation(sensor, CAPTURE_SATURATION);
     }
     return true;
 }

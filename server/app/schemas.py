@@ -24,6 +24,13 @@ class ReadingIn(BaseModel):
     patient_name: str | None = None
     fluid_label: str | None = None
 
+    # Only populated on the camera-frame path (app/routers/frames.py) -
+    # the model's auxiliary 4-class prediction (empty/50%/80%/full) from
+    # the same forward pass as the continuous fill_level_percent, shown
+    # on the dashboard as a rough "does the model agree with itself"
+    # sanity signal. Null for JSON-only readings (no image involved).
+    aux_class: str | None = None
+
 
 class ReadingOut(ReadingIn):
     model_config = ConfigDict(from_attributes=True)

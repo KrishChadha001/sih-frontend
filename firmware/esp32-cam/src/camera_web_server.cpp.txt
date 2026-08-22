@@ -1,0 +1,272 @@
+// CAMERA CONFIG + LIVE PREVIEW WEB SERVER - not part of the real firmware.
+//
+// Standalone mode: connects to WiFi, then hosts its own webpage (on the
+// ESP32-CAM itself) with a live MJPEG video stream and camera settings
+// (resolution, quality, brightness/contrast/saturation, flip/mirror,
+// flash LED) - the classic "ESP32-CAM web server" experience, for
+// previewing/tuning the physical camera framing before running the real
+// capture-and-upload firmware. No backend/WiFi credentials for the
+// server needed - this doesn't touch server/ at all.
+//
+// HOW TO USE:
+//   1. Rename src/main.cpp to src/main.cpp.bak (that's the real
+//      firmware - swap back to it after you're done previewing).
+//   2. Rename this file to src/main.cpp.
+//   3. Flash it (GPIO0 to GND as usual), remove the jumper, reset.
+//   4. Watch the serial monitor for a line like:
+//        [WebServer] open http://192.168.1.42/ in a browser
+//      Open that URL from a device on the same WiFi network.
+//
+// The page shows the live feed and sliders/buttons for camera settings -
+// useful for confirming framing/focus/exposure before pointing it at an
+// actual IV bag for real use.
+
+#include <Arduino.h>
+#include <WiFi.h>
+#include <esp_http_server.h>
+#include "esp_camera.h"
+
+#include "camera_pins.h"
+#include "config.h"
+#include "wifi_manager.h"
+
+WiFiManager wifiManager;
+httpd_handle_t streamServer = nullptr;
+
+namespace {
+
+bool initCamera() {
+    camera_config_t config;
+    config.ledc_channel = LEDC_CHANNEL_0;
+    config.ledc_timer = LEDC_TIMER_0;
+    config.pin_d0 = Y2_GPIO_NUM;
+    config.pin_d1 = Y3_GPIO_NUM;
+    config.pin_d2 = Y4_GPIO_NUM;
+    config.pin_d3 = Y5_GPIO_NUM;
+    config.pin_d4 = Y6_GPIO_NUM;
+    config.pin_d5 = Y7_GPIO_NUM;
+    config.pin_d6 = Y8_GPIO_NUM;
+    config.pin_d7 = Y9_GPIO_NUM;
+    config.pin_xclk = XCLK_GPIO_NUM;
+    config.pin_pclk = PCLK_GPIO_NUM;
+    config.pin_vsync = VSYNC_GPIO_NUM;
+    config.pin_href = HREF_GPIO_NUM;
+    config.pin_sccb_sda = SIOD_GPIO_NUM;
+    config.pin_sccb_scl = SIOC_GPIO_NUM;
+    config.pin_pwdn = PWDN_GPIO_NUM;
+    config.pin_reset = RESET_GPIO_NUM;
+    config.xclk_freq_hz = 20000000;
+    config.pixel_format = PIXFORMAT_JPEG;
+
+    if (psramFound()) {
+        config.frame_size = FRAMESIZE_VGA;
+        config.jpeg_quality = 12;
+        config.fb_count = 2;
+        config.fb_location = CAMERA_FB_IN_PSRAM;
+        config.grab_mode = CAMERA_GRAB_LATEST;
+    } else {
+        config.frame_size = FRAMESIZE_SVGA;
+        config.jpeg_quality = 15;
+        config.fb_count = 1;
+        config.fb_location = CAMERA_FB_IN_DRAM;
+    }
+
+    return esp_camera_init(&config) == ESP_OK;
+}
+
+// --- index page: live stream + settings controls -------------------------
+
+const char INDEX_HTML[] PROGMEM = R"HTML(
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>FluidWatch - Camera Preview</title>
+<style>
+body{font-family:sans-serif;background:#111;color:#eee;margin:0;padding:16px}
+h1{font-size:18px;font-weight:600}
+img{max-width:100%;border-radius:8px;border:1px solid #333}
+.controls{display:grid;gap:10px;margin-top:16px;max-width:420px}
+.row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+label{font-size:13px;color:#aaa}
+button,select{background:#222;color:#eee;border:1px solid #444;border-radius:6px;padding:6px 10px}
+input[type=range]{width:180px}
+</style></head><body>
+<h1>ESP32-CAM live preview</h1>
+<img id="stream" src="/stream">
+<div class="controls">
+  <div class="row"><label>Resolution</label>
+    <select id="framesize" onchange="setVar('framesize', this.value)">
+      <option value="6">QVGA (320x240)</option>
+      <option value="8" selected>VGA (640x480)</option>
+      <option value="9">SVGA (800x600)</option>
+      <option value="10">XGA (1024x768)</option>
+    </select></div>
+  <div class="row"><label>JPEG quality (lower = better)</label>
+    <input type="range" min="4" max="40" value="12" oninput="setVar('quality', this.value)"></div>
+  <div class="row"><label>Brightness</label>
+    <input type="range" min="-2" max="2" value="0" oninput="setVar('brightness', this.value)"></div>
+  <div class="row"><label>Contrast</label>
+    <input type="range" min="-2" max="2" value="0" oninput="setVar('contrast', this.value)"></div>
+  <div class="row"><label>Flip vertical</label>
+    <input type="checkbox" onchange="setVar('vflip', this.checked ? 1 : 0)"></div>
+  <div class="row"><label>Mirror horizontal</label>
+    <input type="checkbox" onchange="setVar('hmirror', this.checked ? 1 : 0)"></div>
+  <div class="row"><label>Flash LED</label>
+    <input type="checkbox" onchange="setVar('flash', this.checked ? 1 : 0)"></div>
+</div>
+<script>
+function setVar(varName, val) {
+  fetch('/control?var=' + varName + '&val=' + val);
+}
+</script>
+</body></html>
+)HTML";
+
+esp_err_t indexHandler(httpd_req_t *req) {
+    httpd_resp_set_type(req, "text/html");
+    return httpd_resp_send(req, INDEX_HTML, HTTPD_RESP_USE_STRLEN);
+}
+
+// --- single snapshot -------------------------------------------------------
+
+esp_err_t captureHandler(httpd_req_t *req) {
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (fb == nullptr) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "image/jpeg");
+    httpd_resp_set_hdr(req, "Content-Disposition", "inline; filename=capture.jpg");
+    esp_err_t res = httpd_resp_send(req, (const char *)fb->buf, fb->len);
+    esp_camera_fb_return(fb);
+    return res;
+}
+
+// --- MJPEG stream: standard multipart/x-mixed-replace technique -----------
+
+constexpr const char *kStreamContentType = "multipart/x-mixed-replace;boundary=frame";
+constexpr const char *kStreamBoundary = "\r\n--frame\r\n";
+constexpr const char *kStreamPartHeader = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
+
+esp_err_t streamHandler(httpd_req_t *req) {
+    esp_err_t res = httpd_resp_set_type(req, kStreamContentType);
+    if (res != ESP_OK) {
+        return res;
+    }
+
+    char partBuf[64];
+    while (true) {
+        camera_fb_t *fb = esp_camera_fb_get();
+        if (fb == nullptr) {
+            Serial.println("[Stream] capture failed");
+            res = ESP_FAIL;
+            break;
+        }
+
+        res = httpd_resp_send_chunk(req, kStreamBoundary, strlen(kStreamBoundary));
+        if (res == ESP_OK) {
+            size_t headerLen = snprintf(partBuf, sizeof(partBuf), kStreamPartHeader, fb->len);
+            res = httpd_resp_send_chunk(req, partBuf, headerLen);
+        }
+        if (res == ESP_OK) {
+            res = httpd_resp_send_chunk(req, (const char *)fb->buf, fb->len);
+        }
+
+        esp_camera_fb_return(fb);
+
+        if (res != ESP_OK) {
+            break; // client disconnected
+        }
+    }
+    return res;
+}
+
+// --- live settings adjustment ----------------------------------------------
+
+esp_err_t controlHandler(httpd_req_t *req) {
+    char query[64];
+    char varName[32];
+    char valStr[16];
+
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+        httpd_query_key_value(query, "var", varName, sizeof(varName)) != ESP_OK ||
+        httpd_query_key_value(query, "val", valStr, sizeof(valStr)) != ESP_OK) {
+        httpd_resp_send_404(req);
+        return ESP_FAIL;
+    }
+
+    int val = atoi(valStr);
+    sensor_t *sensor = esp_camera_sensor_get();
+
+    if (!strcmp(varName, "framesize")) {
+        sensor->set_framesize(sensor, (framesize_t)val);
+    } else if (!strcmp(varName, "quality")) {
+        sensor->set_quality(sensor, val);
+    } else if (!strcmp(varName, "brightness")) {
+        sensor->set_brightness(sensor, val);
+    } else if (!strcmp(varName, "contrast")) {
+        sensor->set_contrast(sensor, val);
+    } else if (!strcmp(varName, "vflip")) {
+        sensor->set_vflip(sensor, val);
+    } else if (!strcmp(varName, "hmirror")) {
+        sensor->set_hmirror(sensor, val);
+    } else if (!strcmp(varName, "flash")) {
+        pinMode(FLASH_LED_GPIO_NUM, OUTPUT);
+        digitalWrite(FLASH_LED_GPIO_NUM, val ? HIGH : LOW);
+    } else {
+        httpd_resp_send_404(req);
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_send(req, "OK", 2);
+}
+
+void startWebServer() {
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.max_uri_handlers = 8;
+
+    httpd_uri_t indexUri = {"/", HTTP_GET, indexHandler, nullptr};
+    httpd_uri_t captureUri = {"/capture", HTTP_GET, captureHandler, nullptr};
+    httpd_uri_t streamUri = {"/stream", HTTP_GET, streamHandler, nullptr};
+    httpd_uri_t controlUri = {"/control", HTTP_GET, controlHandler, nullptr};
+
+    if (httpd_start(&streamServer, &config) == ESP_OK) {
+        httpd_register_uri_handler(streamServer, &indexUri);
+        httpd_register_uri_handler(streamServer, &captureUri);
+        httpd_register_uri_handler(streamServer, &streamUri);
+        httpd_register_uri_handler(streamServer, &controlUri);
+    } else {
+        Serial.println("[WebServer] failed to start");
+    }
+}
+
+} // namespace
+
+void setup() {
+    Serial.begin(115200);
+    delay(300);
+    Serial.println("\n[Camera Web Server] booting...");
+
+    if (!initCamera()) {
+        Serial.println("[main] camera init failed, halting");
+        while (true) {
+            delay(1000);
+        }
+    }
+
+    wifiManager.begin(WIFI_SSID, WIFI_PASSWORD);
+    if (!wifiManager.isConnected()) {
+        Serial.println("[main] WiFi not connected - can't serve a webpage without it, halting");
+        while (true) {
+            delay(1000);
+        }
+    }
+
+    startWebServer();
+    Serial.printf("[WebServer] open http://%s/ in a browser (same WiFi network)\n",
+                   WiFi.localIP().toString().c_str());
+}
+
+void loop() {
+    wifiManager.ensureConnected();
+    delay(1000);
+}
