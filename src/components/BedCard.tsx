@@ -1,7 +1,8 @@
+import { useState } from "react";
 import { AlertTriangle, Bell, BellOff, CheckCircle2, Clock, Droplet } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { formatFlow, UNITS, type Bed, type UnitKey } from "@/lib/fluidwatch";
+import { formatFlow, frameImageUrl, UNITS, type Bed, type UnitKey } from "@/lib/fluidwatch";
 
 const statusStyles: Record<Bed["status"], string> = {
   STABLE: "bg-success-soft text-success",
@@ -27,13 +28,22 @@ const StatusIcon = ({ status }: { status: Bed["status"] }) =>
 export function BedCard({
   bed,
   unit,
+  httpOrigin,
   onToggleMute,
 }: {
   bed: Bed;
   unit: UnitKey;
+  httpOrigin: string | null;
   onToggleMute: (id: string) => void;
 }) {
   const critical = bed.status === "CRITICAL";
+  const imageUrl = frameImageUrl(httpOrigin, bed.id, bed.updatedAt);
+  // Tracks the specific URL that failed, not just a boolean - so a demo
+  // bed (no photo, ever) stays hidden without a broken-image flash, but
+  // a real device's transient failure doesn't hide it forever once the
+  // next reading's URL (a new cache-busted timestamp) comes in.
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const showImage = imageUrl !== null && imageUrl !== failedUrl;
 
   return (
     <article
@@ -47,6 +57,16 @@ export function BedCard({
         {bed.bed} · {bed.patient}
       </h3>
       <p className="mt-1 text-sm text-muted-foreground">{bed.fluid}</p>
+
+      {showImage && (
+        <img
+          key={imageUrl}
+          src={imageUrl}
+          onError={() => setFailedUrl(imageUrl)}
+          alt={`Latest camera frame for ${bed.bed}`}
+          className="mt-3 aspect-video w-full rounded-lg border border-border object-cover"
+        />
+      )}
 
       <span
         className={cn(

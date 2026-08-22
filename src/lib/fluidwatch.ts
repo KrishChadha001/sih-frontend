@@ -104,6 +104,35 @@ export function applyLiveUpdate(
   return Array.from(byId.values());
 }
 
+/**
+ * The dashboard only ever gets handed a WebSocket URL
+ * (ws://host:port/ws/bedfeed) - the backend's plain-HTTP origin (for
+ * fetching a device's latest photo) is the same host/port, just a
+ * different scheme and path. Derived rather than configured separately
+ * so there's only one URL to ever change (in /admin).
+ */
+export function deriveHttpOrigin(wsUrl: string): string | null {
+  try {
+    const u = new URL(wsUrl);
+    u.protocol = u.protocol === "wss:" ? "https:" : "http:";
+    u.pathname = "";
+    u.search = "";
+    return u.toString().replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
+/** URL for a device's most recently uploaded camera frame, or null if
+ * the backend's origin can't be determined (bad ws_url) - callers
+ * should skip rendering an image in that case rather than requesting a
+ * broken URL. Includes a cache-busting param so the browser re-fetches
+ * on every new reading instead of showing a stale cached image. */
+export function frameImageUrl(httpOrigin: string | null, deviceId: string, updatedAt: number): string | null {
+  if (!httpOrigin) return null;
+  return `${httpOrigin}/api/v1/frames/latest?device_id=${encodeURIComponent(deviceId)}&t=${updatedAt}`;
+}
+
 export const UNITS = {
   ml: { label: "ml", factor: 1, suffix: "ml/hr" },
   l: { label: "L", factor: 0.001, suffix: "L/hr" },

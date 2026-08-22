@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from ..models import Reading
@@ -8,6 +8,24 @@ from ..schemas import ReadingIn
 
 DEFAULT_BAG_CAPACITY_ML = 500.0
 LOW_LEVEL_THRESHOLD_PCT = 15.0
+
+# At a 10s capture interval that's ~8600 readings/device/day - SQLite
+# itself handles far more than this without issue, but a long-running
+# demo/rehearsal period shouldn't accumulate rows forever either. This
+# cap keeps exports and "latest" queries fast and storage predictable.
+MAX_READINGS_PER_DEVICE = 1000
+
+
+def prune_old_readings(db: Session, device_id: str, keep: int = MAX_READINGS_PER_DEVICE) -> None:
+    stale_ids = db.scalars(
+        select(Reading.id)
+        .where(Reading.device_id == device_id)
+        .order_by(Reading.received_at.desc())
+        .offset(keep)
+    ).all()
+    if stale_ids:
+        db.execute(delete(Reading).where(Reading.id.in_(stale_ids)))
+        db.commit()
 
 
 def build_reading(

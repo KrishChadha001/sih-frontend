@@ -63,7 +63,12 @@ a new one generated.
   hospital record-keeping / EMR hand-off.
 - `WS /ws/readings` - live feed, full reading shape.
 - `WS /ws/bedfeed` - live feed, shaped for `frontend/`'s dashboard.
-- `POST /api/v1/frames` - placeholder for real camera-frame uploads later.
+- `POST /api/v1/frames` - camera-frame uploads (what the ESP32-CAM sends
+  every `SEND_INTERVAL_MS`); runs the real fill-level model.
+- `GET /api/v1/frames/latest?device_id=` - the most recent photo received
+  from that device (what its last reading was computed from) - no auth,
+  same as the other GET endpoints, since browsers can't attach a bearer
+  token to an `<img src>` load. The dashboard's bed cards use this.
 - `GET /health` - liveness check.
 - `GET /docs` - interactive Swagger UI (FastAPI auto-generated).
 

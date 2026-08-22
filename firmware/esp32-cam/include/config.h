@@ -31,8 +31,21 @@
 
 // Capture settings. FRAMESIZE_VGA (640x480) is a solid default - small,
 // fast to upload, plenty of resolution for the model (which resizes to
-// 224x224 anyway - see frontend/server/app/cv/real_frame_processor.py).
-// Bump to FRAMESIZE_SVGA/XGA only if testing shows the model needs more
-// detail; every step up meaningfully increases upload time on WiFi.
+// 224x224 anyway - see frontend/server/app/cv/real_frame_processor.py,
+// so going higher than VGA mostly just makes uploads slower for detail
+// the model discards). Bump to FRAMESIZE_SVGA/XGA only if a real test
+// against the actual container shows the model needs more detail.
 #define CAPTURE_FRAME_SIZE FRAMESIZE_VGA
 #define CAPTURE_JPEG_QUALITY 12 // 0-63, lower = higher quality/larger file
+
+// Image tuning - auto exposure/white-balance stay on by default (most
+// robust across real lighting variation, and likely closest to how the
+// training photos were casually captured). Brightness/contrast/
+// saturation default to sensor-neutral (0) - if real photos of the
+// actual container look over/under-exposed or washed out, use the
+// live-preview tool (swap in src/camera_web_server.cpp.txt - see its
+// header comment) to find values that look right against the real
+// mounting/lighting, then set them here. Range for all three is -2..2.
+#define CAPTURE_BRIGHTNESS 0
+#define CAPTURE_CONTRAST 0
+#define CAPTURE_SATURATION 0
