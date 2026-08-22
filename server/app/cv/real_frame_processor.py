@@ -19,7 +19,7 @@ import torch.nn as nn
 from PIL import Image
 from torchvision import models, transforms
 
-from .base import FrameProcessor
+from .base import FrameProcessor, FrameResult
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +111,7 @@ class RealFrameProcessor(FrameProcessor):
 
         logger.info("RealFrameProcessor loaded %s on %s", model_path.name, self.device)
 
-    def process(self, device_id: str, frame_bytes: bytes) -> float:
+    def process(self, device_id: str, frame_bytes: bytes) -> FrameResult:
         x = _prepare_image(frame_bytes).to(self.device)
 
         with torch.no_grad():
@@ -123,4 +123,4 @@ class RealFrameProcessor(FrameProcessor):
         class_name = _CLASS_NAMES[int(class_logits.argmax(dim=1).item())]
         logger.info("device=%s fill=%.1f%% aux_class=%s", device_id, fill, class_name)
 
-        return fill
+        return FrameResult(fill_percent=fill, aux_class=class_name)

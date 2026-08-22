@@ -37,14 +37,15 @@ async def ingest_frame(
     frame_bytes = await file.read()
     save_latest_frame(device_id, frame_bytes)
 
-    level_pct = active_processor.process(device_id, frame_bytes)
+    result = active_processor.process(device_id, frame_bytes)
     reading_in = build_reading(
         db,
         device_id,
-        level_pct,
+        result.fill_percent,
         bed_label=bed_label,
         patient_name=patient_name,
         fluid_label=fluid_label,
+        aux_class=result.aux_class,
     )
 
     row = Reading(**reading_in.model_dump())

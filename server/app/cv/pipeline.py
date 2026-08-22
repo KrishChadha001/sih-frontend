@@ -1,9 +1,9 @@
 import random
 
-from .base import FrameProcessor
+from .base import FrameProcessor, FrameResult
 from .real_frame_processor import RealFrameProcessor
 
-__all__ = ["FrameProcessor", "MockFrameProcessor", "active_processor"]
+__all__ = ["FrameProcessor", "FrameResult", "MockFrameProcessor", "active_processor"]
 
 
 class MockFrameProcessor(FrameProcessor):
@@ -11,8 +11,17 @@ class MockFrameProcessor(FrameProcessor):
     the /api/v1/frames upload path can be exercised end-to-end before any
     real CV exists."""
 
-    def process(self, device_id: str, frame_bytes: bytes) -> float:
-        return round(random.uniform(10, 100), 1)
+    def process(self, device_id: str, frame_bytes: bytes) -> FrameResult:
+        level = round(random.uniform(10, 100), 1)
+        if level <= 5:
+            aux_class = "empty"
+        elif level <= 60:
+            aux_class = "50%"
+        elif level <= 90:
+            aux_class = "80%"
+        else:
+            aux_class = "full"
+        return FrameResult(fill_percent=level, aux_class=aux_class)
 
 
 # The real model - see CV_INTEGRATION.md / real_frame_processor.py. Fall

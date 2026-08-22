@@ -39,3 +39,5 @@ class Reading(Base):
     bed_label: Mapped[str | None] = mapped_column(String, nullable=True)
     patient_name: Mapped[str | None] = mapped_column(String, nullable=True)
     fluid_label: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    aux_class: Mapped[str | None] = mapped_column(String, nullable=True)

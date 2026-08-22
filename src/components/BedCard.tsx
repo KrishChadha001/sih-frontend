@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertTriangle, Bell, BellOff, CheckCircle2, Clock, Droplet } from "lucide-react";
+import { Line, LineChart, ResponsiveContainer, YAxis } from "recharts";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { formatFlow, frameImageUrl, UNITS, type Bed, type UnitKey } from "@/lib/fluidwatch";
@@ -16,6 +17,12 @@ const barStyles: Record<Bed["status"], string> = {
   CRITICAL: "bg-critical",
 };
 
+const sparklineStroke: Record<Bed["status"], string> = {
+  STABLE: "var(--success)",
+  WATCH: "var(--warn)",
+  CRITICAL: "var(--critical)",
+};
+
 const StatusIcon = ({ status }: { status: Bed["status"] }) =>
   status === "STABLE" ? (
     <CheckCircle2 className="size-3.5" />
@@ -24,6 +31,23 @@ const StatusIcon = ({ status }: { status: Bed["status"] }) =>
   ) : (
     <AlertTriangle className="size-3.5" />
   );
+
+/** "just now" / "12s ago" / "4m ago" - ticks every second so it's
+ * visibly live on screen, not a static string frozen at render time. */
+function useFreshnessLabel(updatedAt: number): string {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const seconds = Math.max(0, Math.round((now - updatedAt) / 1000));
+  if (seconds < 3) return "just now";
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  return `${minutes}m ago`;
+}
 
 export function BedCard({
   bed,
@@ -44,6 +68,8 @@ export function BedCard({
   // next reading's URL (a new cache-busted timestamp) comes in.
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const showImage = imageUrl !== null && imageUrl !== failedUrl;
+  const freshness = useFreshnessLabel(bed.updatedAt);
+  const sparklineData = bed.history.map((level, i) => ({ i, level }));
 
   return (
     <article
@@ -53,10 +79,20 @@ export function BedCard({
       )}
       aria-label={`${bed.bed} ${bed.patient} ${bed.status}`}
     >
-      <h3 className="text-lg font-semibold tracking-tight">
-        {bed.bed} · {bed.patient}
-      </h3>
-      <p className="mt-1 text-sm text-muted-foreground">{bed.fluid}</p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-lg font-semibold tracking-tight">
+            {bed.bed} · {bed.patient}
+          </h3>
+          <p className="mt-1 text-sm text-muted-foreground">{bed.fluid}</p>
+        </div>
+        <span
+          className="mt-0.5 shrink-0 text-xs text-muted-foreground"
+          title={new Date(bed.updatedAt).toLocaleTimeString()}
+        >
+          {freshness}
+        </span>
+      </div>
 
       {showImage && (
         <img
@@ -68,15 +104,25 @@ export function BedCard({
         />
       )}
 
-      <span
-        className={cn(
-          "mt-3 inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold tracking-wide",
-          statusStyles[bed.status],
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <span
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold tracking-wide",
+            statusStyles[bed.status],
+          )}
+        >
+          <StatusIcon status={bed.status} />
+          {bed.status}
+        </span>
+        {bed.auxClass && (
+          <span
+            className="inline-flex items-center rounded-md bg-secondary px-2 py-1 text-xs font-medium text-secondary-foreground"
+            title="Model's auxiliary classification, from the same image"
+          >
+            AI read: {bed.auxClass}
+          </span>
         )}
-      >
-        <StatusIcon status={bed.status} />
-        {bed.status}
-      </span>
+      </div>
 
       <p className="mt-5 text-xs font-medium tracking-widest text-muted-foreground">CURRENT FLOW</p>
       <div className="flex items-end justify-between gap-4">
@@ -113,6 +159,24 @@ export function BedCard({
           style={{ width: `${Math.max(1, Math.min(100, bed.level))}%` }}
         />
       </div>
+
+      {sparklineData.length > 1 && (
+        <div className="mt-3 h-10 w-full" aria-hidden="true">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={sparklineData}>
+              <YAxis domain={[0, 100]} hide />
+              <Line
+                type="monotone"
+                dataKey="level"
+                stroke={sparklineStroke[bed.status]}
+                strokeWidth={2}
+                dot={false}
+                isAnimationActive={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
       {critical && (
         <Button

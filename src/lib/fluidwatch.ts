@@ -1,5 +1,15 @@
 export type BedStatus = "STABLE" | "WATCH" | "CRITICAL";
 
+// Rough model self-agreement signal, camera path only - see
+// server/app/cv/base.py's FrameResult.aux_class.
+export type AuxClass = "empty" | "50%" | "80%" | "full";
+
+// How many past level readings each bed keeps for its sparkline. At a
+// 10s capture interval that's ~5 minutes of history - enough to show a
+// visible trend on a card without the array growing unbounded over a
+// long-running demo.
+const MAX_HISTORY_POINTS = 30;
+
 export interface Bed {
   id: string;
   bed: string;
@@ -10,6 +20,8 @@ export interface Bed {
   status: BedStatus;
   muted: boolean;
   updatedAt: number;
+  auxClass: AuxClass | null;
+  history: number[]; // recent level % readings, oldest first
 }
 
 // Backend's /ws/bedfeed (server/app/routers/ws.py) - bridges the ESP32
@@ -20,13 +32,18 @@ export interface Bed {
 export const DEFAULT_WS_URL = "ws://localhost:8000/ws/bedfeed";
 
 export const INITIAL_BEDS: Bed[] = [
-  { id: "01", bed: "Bed 01", patient: "J. Marsh", fluid: "Saline 0.9%", flow: 124, level: 78, status: "STABLE", muted: false, updatedAt: Date.now() },
-  { id: "02", bed: "Bed 02", patient: "A. Chen", fluid: "Dextrose 5%", flow: 98, level: 64, status: "STABLE", muted: false, updatedAt: Date.now() },
-  { id: "03", bed: "Bed 03", patient: "R. Kovac", fluid: "Heparin drip", flow: 12, level: 8, status: "CRITICAL", muted: false, updatedAt: Date.now() },
-  { id: "04", bed: "Bed 04", patient: "M. Osei", fluid: "Ringer's Lactate", flow: 110, level: 91, status: "STABLE", muted: false, updatedAt: Date.now() },
-  { id: "05", bed: "Bed 05", patient: "L. Vidal", fluid: "Saline 0.9%", flow: 45, level: 31, status: "WATCH", muted: false, updatedAt: Date.now() },
-  { id: "06", bed: "Bed 06", patient: "T. Nakamura", fluid: "TPN Nutrition", flow: 0, level: 2, status: "CRITICAL", muted: false, updatedAt: Date.now() },
+  { id: "01", bed: "Bed 01", patient: "J. Marsh", fluid: "Saline 0.9%", flow: 124, level: 78, status: "STABLE", muted: false, updatedAt: Date.now(), auxClass: null, history: [78] },
+  { id: "02", bed: "Bed 02", patient: "A. Chen", fluid: "Dextrose 5%", flow: 98, level: 64, status: "STABLE", muted: false, updatedAt: Date.now(), auxClass: null, history: [64] },
+  { id: "03", bed: "Bed 03", patient: "R. Kovac", fluid: "Heparin drip", flow: 12, level: 8, status: "CRITICAL", muted: false, updatedAt: Date.now(), auxClass: null, history: [8] },
+  { id: "04", bed: "Bed 04", patient: "M. Osei", fluid: "Ringer's Lactate", flow: 110, level: 91, status: "STABLE", muted: false, updatedAt: Date.now(), auxClass: null, history: [91] },
+  { id: "05", bed: "Bed 05", patient: "L. Vidal", fluid: "Saline 0.9%", flow: 45, level: 31, status: "WATCH", muted: false, updatedAt: Date.now(), auxClass: null, history: [31] },
+  { id: "06", bed: "Bed 06", patient: "T. Nakamura", fluid: "TPN Nutrition", flow: 0, level: 2, status: "CRITICAL", muted: false, updatedAt: Date.now(), auxClass: null, history: [2] },
 ];
+
+function pushHistory(history: number[], level: number): number[] {
+  const next = [...history, level];
+  return next.length > MAX_HISTORY_POINTS ? next.slice(next.length - MAX_HISTORY_POINTS) : next;
+}
 
 /** Ward-configurable alert thresholds, set from the Admin panel and
  * persisted to Supabase's `ward_settings` row. */
@@ -59,7 +76,14 @@ export function tick(beds: Bed[], thresholds: Thresholds = DEFAULT_THRESHOLDS): 
     const level = Math.max(0, Math.round((b.level - drain) * 10) / 10);
     const jitter = b.flow > 0 ? Math.round((Math.random() - 0.5) * 8) : 0;
     const flow = level <= 0 ? 0 : Math.max(0, b.flow + jitter);
-    return { ...b, level, flow, status: deriveStatus(level, flow, thresholds), updatedAt: Date.now() };
+    return {
+      ...b,
+      level,
+      flow,
+      status: deriveStatus(level, flow, thresholds),
+      updatedAt: Date.now(),
+      history: pushHistory(b.history, level),
+    };
   });
 }
 
@@ -70,6 +94,14 @@ export function tick(beds: Bed[], thresholds: Thresholds = DEFAULT_THRESHOLDS): 
  * DEVICE_ID, e.g. "IV-STAND-01") shows up alongside the demo beds the
  * first time it reports in, no manual provisioning needed on this side.
  */
+const AUX_CLASSES: readonly AuxClass[] = ["empty", "50%", "80%", "full"];
+
+function parseAuxClass(value: unknown): AuxClass | null {
+  return typeof value === "string" && (AUX_CLASSES as readonly string[]).includes(value)
+    ? (value as AuxClass)
+    : null;
+}
+
 export function applyLiveUpdate(
   beds: Bed[],
   payload: unknown,
@@ -80,7 +112,7 @@ export function applyLiveUpdate(
 
   for (const row of rows) {
     if (!row || typeof row !== "object") continue;
-    const incoming = row as Partial<Bed>;
+    const incoming = row as Partial<Bed> & { auxClass?: unknown };
     const id = String(incoming.id ?? "").trim();
     if (!id) continue;
 
@@ -98,6 +130,8 @@ export function applyLiveUpdate(
       status: incoming.status ?? deriveStatus(level, flow, thresholds),
       muted: existing?.muted ?? false,
       updatedAt: Date.now(),
+      auxClass: parseAuxClass(incoming.auxClass) ?? existing?.auxClass ?? null,
+      history: pushHistory(existing?.history ?? [], level),
     });
   }
 

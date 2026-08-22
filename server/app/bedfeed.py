@@ -14,8 +14,9 @@ _STATUS_MAP = {
 def to_bed_payload(reading: ReadingOut) -> dict:
     """Shapes a reading into exactly what frontend/src/lib/fluidwatch.ts's
     Bed type and dashboard.tsx's applyLiveUpdate() expect: {id, bed,
-    patient, fluid, flow, level, status}. `id` is the join key the
-    dashboard matches/creates bed cards on, so it's always device_id."""
+    patient, fluid, flow, level, status, auxClass}. `id` is the join key
+    the dashboard matches/creates bed cards on, so it's always device_id.
+    auxClass is null for JSON-only (non-camera) readings."""
     return {
         "id": reading.device_id,
         "bed": reading.bed_label or reading.device_id,
@@ -24,4 +25,5 @@ def to_bed_payload(reading: ReadingOut) -> dict:
         "flow": round(reading.flow_rate_ml_per_hr, 1),
         "level": round(reading.fluid_level_percent, 1),
         "status": _STATUS_MAP.get(reading.status, "STABLE"),
+        "auxClass": reading.aux_class,
     }

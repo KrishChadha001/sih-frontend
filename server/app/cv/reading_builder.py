@@ -36,6 +36,7 @@ def build_reading(
     bed_label: str | None = None,
     patient_name: str | None = None,
     fluid_label: str | None = None,
+    aux_class: str | None = None,
 ) -> ReadingIn:
     """Turns a bare fill percentage (from any FrameProcessor - mock or
     real) into a full ReadingIn. Flow rate isn't derivable from a single
@@ -83,4 +84,5 @@ def build_reading(
         bed_label=bed_label,
         patient_name=patient_name,
         fluid_label=fluid_label,
+        aux_class=aux_class,
     )

@@ -1,14 +1,25 @@
 from abc import ABC, abstractmethod
+from typing import NamedTuple
+
+
+class FrameResult(NamedTuple):
+    fill_percent: float
+    # Optional auxiliary classification (e.g. "empty"/"50%"/"80%"/"full")
+    # if the implementation has one - shown on the dashboard as a rough
+    # sanity signal alongside the continuous percentage. None if the
+    # implementation doesn't produce one.
+    aux_class: str | None = None
 
 
 class FrameProcessor(ABC):
-    """Turns a raw camera frame into a fluid-level reading, 0-100%. This is
-    the *entire* contract a real CV/ML implementation needs to satisfy -
-    see CV_INTEGRATION.md for the full spec. Volume, flow rate, status and
-    defaults are derived centrally from this number in
+    """Turns a raw camera frame into a fluid-level reading. This is the
+    *entire* contract a real CV/ML implementation needs to satisfy - see
+    CV_INTEGRATION.md for the full spec. Volume, flow rate, status and
+    defaults are derived centrally from fill_percent in
     app/cv/reading_builder.py, so an implementation here only ever needs
-    to answer one question: given this image, what's the fill percentage?
+    to answer one real question: given this image, what's the fill
+    percentage? (aux_class is optional flavor, not required.)
     """
 
     @abstractmethod
-    def process(self, device_id: str, frame_bytes: bytes) -> float: ...
+    def process(self, device_id: str, frame_bytes: bytes) -> FrameResult: ...
